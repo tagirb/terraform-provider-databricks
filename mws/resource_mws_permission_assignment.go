@@ -3,11 +3,30 @@ package mws
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/databricks/databricks-sdk-go/apierr"
 	"github.com/databricks/databricks-sdk-go/service/iam"
 	"github.com/databricks/terraform-provider-databricks/common"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"golang.org/x/sync/singleflight"
+)
+
+// mwsAssignmentsKey uniquely identifies a cached permission assignment list
+// by the account client pointer and workspace ID.
+type mwsAssignmentsKey struct {
+	acc         any
+	workspaceId int64
+}
+
+// mwsPermissionAssignmentsCache caches workspace permission assignment lists.
+// The cache is keyed by mwsAssignmentsKey so concurrent reads for the same
+// workspace share a single result. mwsPermissionAssignmentsSF ensures that
+// when many goroutines all miss the cache simultaneously, only one in-flight
+// API call is made; the rest block and share the result.
+var (
+	mwsPermissionAssignmentsCache sync.Map
+	mwsPermissionAssignmentsSF    singleflight.Group
 )
 
 func getPermissionsByPrincipal(list iam.PermissionAssignments, principalId int64) (res iam.UpdateWorkspaceAssignments, err error) {
@@ -57,6 +76,7 @@ func ResourceMwsPermissionAssignment() common.Resource {
 				return err
 			}
 			pair.Pack(d)
+			mwsPermissionAssignmentsCache.Delete(mwsAssignmentsKey{acc: acc, workspaceId: assignment.WorkspaceId})
 			return nil
 		},
 		Read: func(ctx context.Context, d *schema.ResourceData, c *common.DatabricksClient) error {
@@ -68,9 +88,23 @@ func ResourceMwsPermissionAssignment() common.Resource {
 			if err != nil {
 				return fmt.Errorf("parse id: %w", err)
 			}
-			list, err := acc.WorkspaceAssignment.ListByWorkspaceId(ctx, common.MustInt64(workspaceId))
-			if err != nil {
-				return err
+			key := mwsAssignmentsKey{acc: acc, workspaceId: common.MustInt64(workspaceId)}
+			var list *iam.PermissionAssignments
+			if cached, ok := mwsPermissionAssignmentsCache.Load(key); ok {
+				list = cached.(*iam.PermissionAssignments)
+			} else {
+				sfKey := fmt.Sprintf("%p/%d", acc, common.MustInt64(workspaceId))
+				v, sfErr, _ := mwsPermissionAssignmentsSF.Do(sfKey, func() (any, error) {
+					result, e := acc.WorkspaceAssignment.ListByWorkspaceId(ctx, common.MustInt64(workspaceId))
+					if e == nil {
+						mwsPermissionAssignmentsCache.Store(key, result)
+					}
+					return result, e
+				})
+				if sfErr != nil {
+					return sfErr
+				}
+				list = v.(*iam.PermissionAssignments)
 			}
 			permissions, err := getPermissionsByPrincipal(*list, common.MustInt64(principalId))
 			if err != nil {
@@ -89,7 +123,12 @@ func ResourceMwsPermissionAssignment() common.Resource {
 			if err != nil {
 				return fmt.Errorf("parse id: %w", err)
 			}
-			return acc.WorkspaceAssignment.DeleteByWorkspaceIdAndPrincipalId(ctx, common.MustInt64(workspaceId), common.MustInt64(principalId))
+			err = acc.WorkspaceAssignment.DeleteByWorkspaceIdAndPrincipalId(ctx, common.MustInt64(workspaceId), common.MustInt64(principalId))
+			if err != nil {
+				return err
+			}
+			mwsPermissionAssignmentsCache.Delete(mwsAssignmentsKey{acc: acc, workspaceId: common.MustInt64(workspaceId)})
+			return nil
 		},
 	}
 }

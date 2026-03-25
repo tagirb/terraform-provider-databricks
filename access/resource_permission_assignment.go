@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"sync"
 
 	"github.com/databricks/databricks-sdk-go/apierr"
 	"github.com/databricks/terraform-provider-databricks/common"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"golang.org/x/sync/singleflight"
 )
 
 func NewPermissionAssignmentAPI(ctx context.Context, m any) PermissionAssignmentAPI {
@@ -123,6 +125,15 @@ func (a PermissionAssignmentAPI) List() (list permissionAssignmentResponse, err 
 	return
 }
 
+// wsPermissionAssignmentsCache caches the workspace permission assignment list per
+// workspace to avoid redundant API calls when reading multiple assignments.
+// wsPermissionAssignmentsSF ensures that concurrent cache misses for the same
+// workspace collapse into a single in-flight API call.
+var (
+	wsPermissionAssignmentsCache sync.Map
+	wsPermissionAssignmentsSF    singleflight.Group
+)
+
 type permissionAssignmentEntity struct {
 	PrincipalId          int64    `json:"principal_id,omitempty" tf:"computed,force_new"`
 	ServicePrincipalName string   `json:"service_principal_name,omitempty" tf:"computed,force_new"`
@@ -156,6 +167,7 @@ func ResourcePermissionAssignment() common.Resource {
 			if err != nil {
 				return err
 			}
+			wsPermissionAssignmentsCache.Delete(c.Config.Host)
 			var assignment permissionAssignmentEntity
 			common.DataToStructPointer(d, s, &assignment)
 			api := NewPermissionAssignmentAPI(ctx, c)
@@ -188,9 +200,21 @@ func ResourcePermissionAssignment() common.Resource {
 			if err != nil {
 				return err
 			}
-			list, err := NewPermissionAssignmentAPI(ctx, c).List()
-			if err != nil {
-				return err
+			var list permissionAssignmentResponse
+			if cached, ok := wsPermissionAssignmentsCache.Load(c.Config.Host); ok {
+				list = cached.(permissionAssignmentResponse)
+			} else {
+				v, sfErr, _ := wsPermissionAssignmentsSF.Do(c.Config.Host, func() (any, error) {
+					result, e := NewPermissionAssignmentAPI(ctx, c).List()
+					if e == nil {
+						wsPermissionAssignmentsCache.Store(c.Config.Host, result)
+					}
+					return result, e
+				})
+				if sfErr != nil {
+					return sfErr
+				}
+				list = v.(permissionAssignmentResponse)
 			}
 			data, err := list.ForPrincipal(common.MustInt64(d.Id()))
 			if err != nil {
@@ -203,6 +227,7 @@ func ResourcePermissionAssignment() common.Resource {
 			if err != nil {
 				return err
 			}
+			wsPermissionAssignmentsCache.Delete(c.Config.Host)
 			var assignment permissionAssignmentEntity
 			common.DataToStructPointer(d, s, &assignment)
 			api := NewPermissionAssignmentAPI(ctx, c)
@@ -214,6 +239,7 @@ func ResourcePermissionAssignment() common.Resource {
 			if err != nil {
 				return err
 			}
+			wsPermissionAssignmentsCache.Delete(c.Config.Host)
 			return NewPermissionAssignmentAPI(ctx, c).Remove(d.Id())
 		},
 	}

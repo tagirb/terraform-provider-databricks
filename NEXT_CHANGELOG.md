@@ -21,3 +21,4 @@
 ### Internal Changes
 
 * Use account host check instead of account ID check in `databricks_access_control_rule_set` to determine client type ([#5484](https://github.com/databricks/terraform-provider-databricks/pull/5484)).
+* Cache workspace permission assignment list in `databricks_permission_assignment` and `databricks_mws_permission_assignment` to reduce repeated API calls when many assignments belong to the same workspace. Concurrent cache misses are deduplicated via `singleflight` so only one in-flight API call is made per workspace.
