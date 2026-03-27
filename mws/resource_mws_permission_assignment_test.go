@@ -10,6 +10,7 @@ import (
 )
 
 func TestPermissionAssignmentCreate(t *testing.T) {
+	globalWorkspaceAssignmentsCache = newWorkspaceAssignmentsCache()
 	qa.ResourceFixture{
 		MockAccountClientFunc: func(m *mocks.MockAccountClient) {
 			e := m.GetMockWorkspaceAssignmentAPI().EXPECT()
@@ -46,6 +47,7 @@ func TestPermissionAssignmentCreate(t *testing.T) {
 }
 
 func TestPermissionAssignmentRead(t *testing.T) {
+	globalWorkspaceAssignmentsCache = newWorkspaceAssignmentsCache()
 	qa.ResourceFixture{
 		MockAccountClientFunc: func(m *mocks.MockAccountClient) {
 			e := m.GetMockWorkspaceAssignmentAPI().EXPECT()
@@ -79,6 +81,7 @@ func TestPermissionAssignmentRead(t *testing.T) {
 }
 
 func TestPermissionAssignmentReadNotFound(t *testing.T) {
+	globalWorkspaceAssignmentsCache = newWorkspaceAssignmentsCache()
 	qa.ResourceFixture{
 		MockAccountClientFunc: func(m *mocks.MockAccountClient) {
 			e := m.GetMockWorkspaceAssignmentAPI().EXPECT()
@@ -102,6 +105,7 @@ func TestPermissionAssignmentReadNotFound(t *testing.T) {
 }
 
 func TestPermissionAssignmentDelete(t *testing.T) {
+	globalWorkspaceAssignmentsCache = newWorkspaceAssignmentsCache()
 	qa.ResourceFixture{
 		MockAccountClientFunc: func(m *mocks.MockAccountClient) {
 			e := m.GetMockWorkspaceAssignmentAPI().EXPECT()
@@ -115,12 +119,14 @@ func TestPermissionAssignmentDelete(t *testing.T) {
 }
 
 func TestPermissionAssignmentFuzz_NoAccountID(t *testing.T) {
+	globalWorkspaceAssignmentsCache = newWorkspaceAssignmentsCache()
 	qa.ResourceCornerCases(t, ResourceMwsPermissionAssignment(),
 		qa.CornerCaseID("123|456"),
 		qa.CornerCaseExpectError("i'm a teapot"))
 }
 
 func TestPermissionAssignmentFuzz_InvalidID(t *testing.T) {
+	globalWorkspaceAssignmentsCache = newWorkspaceAssignmentsCache()
 	qa.ResourceCornerCases(t, ResourceMwsPermissionAssignment(),
 		qa.CornerCaseExpectError("parse id: invalid ID: x"),
 		qa.CornerCaseSkipCRUD("create"),
@@ -128,6 +134,7 @@ func TestPermissionAssignmentFuzz_InvalidID(t *testing.T) {
 }
 
 func TestPermissionAssignmentFuzz_ApiErrors(t *testing.T) {
+	globalWorkspaceAssignmentsCache = newWorkspaceAssignmentsCache()
 	qa.ResourceCornerCases(t, ResourceMwsPermissionAssignment(),
 		qa.CornerCaseAccountID("abc"),
 		qa.CornerCaseID("123|456"))
